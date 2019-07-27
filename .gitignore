@@ -1,0 +1,13 @@
+
+# npm
+node_modules/
+
+# node-gyp
+Debug/
+Release/
+build/
+
+# some development files
+compile_commands.json
+Makefile
+
