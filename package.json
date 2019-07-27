@@ -1,0 +1,31 @@
+{
+  "name": "process-native",
+  "version": "0.0.1",
+  "description": "A native node addon to query and manipulate running processes",
+  "main": "lib/index.js",
+  "scripts": {
+    "test": "mocha",
+    "install": "node-gyp rebuild"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/samvv/node-process-native.git"
+  },
+  "keywords": [
+    "os",
+    "process",
+    "native",
+    "addon",
+    "process-management"
+  ],
+  "author": "Sam Vervaeck <vervaeck.sam@skynet.be>",
+  "license": "MIT",
+  "gypfile": true,
+  "bugs": {
+    "url": "https://github.com/samvv/node-process-native/issues"
+  },
+  "homepage": "https://github.com/samvv/node-process-native#readme",
+  "dependencies": {
+    "bindings": "^1.5.0"
+  }
+}
