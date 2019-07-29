@@ -3,11 +3,17 @@ const { assert } = require('chai')
 const { spawn } = require("child_process")
 const { Process }= require('./lib/index')
 
+function spawnSibling(cmd) {
+  const spawned = spawn(cmd, { shell: true, detach: true, stdio: 'ignore' })
+  spawned.unref()
+  return spawned
+}
+
 describe('a process monitor', () => {
 
   it('can monitor the exit status of multiple processes', done => {
-    const spawned1 = spawn('sleep 0.2', { shell: true })
-    const spawned2 = spawn('sleep 0.3', { shell: true })
+    const spawned1 = spawnSibling('sleep 0.2')
+    const spawned2 = spawnSibling('sleep 0.3')
     const proc1 = new Process(spawned1.pid)
     const proc2 = new Process(spawned2.pid)
     assert.isOk(proc1.running)
@@ -25,6 +31,17 @@ describe('a process monitor', () => {
       exitCount++
       if (exitCount == 2) done()
     })
+  })
+
+  it('errors when providing an invalid PID', () => {
+    assert.throws(() => new Process(0), Error);
+  })
+
+  it('can detach from a connected process', () => {
+    // Make sure to sleep longer than the test timeout
+    const spawned = spawnSibling('sleep 10')
+    const proc = new Process(spawned.pid)
+    proc.close()
   })
 
 })
