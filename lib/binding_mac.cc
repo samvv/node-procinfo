@@ -215,29 +215,29 @@ const char* strerrid(int num) {
 
 // This function does the same as napi_throw_error, but uses a napi_deferred
 // object to actually propagate the error.
-napi_status napi_error_deferred(
-    napi_env env,
-    napi_deferred deferred, 
-    const char* const code, 
-    const char*const msg
-) {
-
-  napi_status status;
-
-  napi_value error;
-  napi_value err_msg;
-  napi_value err_code;
-
-  NAPI_PROC_CALL(napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &err_msg));
-
-  if (code != NULL)
-    NAPI_PROC_CALL(napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &err_code));
-
-  NAPI_PROC_CALL(napi_create_error(env, code == NULL ? NULL : err_code, err_msg, &error));
-  NAPI_PROC_CALL(napi_reject_deferred(env, deferred, error));
-
-  return napi_ok;
-}
+// napi_status napi_error_deferred(
+//     napi_env env,
+//     napi_deferred deferred, 
+//     const char* const code, 
+//     const char*const msg
+// ) {
+// 
+//   napi_status status;
+// 
+//   napi_value error;
+//   napi_value err_msg;
+//   napi_value err_code;
+// 
+//   NAPI_PROC_CALL(napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &err_msg));
+// 
+//   if (code != NULL)
+//     NAPI_PROC_CALL(napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &err_code));
+// 
+//   NAPI_PROC_CALL(napi_create_error(env, code == NULL ? NULL : err_code, err_msg, &error));
+//   NAPI_PROC_CALL(napi_reject_deferred(env, deferred, error));
+// 
+//   return napi_ok;
+// }
 
 struct JSCallback {
 
@@ -286,23 +286,30 @@ void PollComplete(napi_env env, napi_status status, void* data) {
       if (pd.kevs[i].fflags & NOTE_EXIT) {
         napi_value exit_str;
         napi_value exit_code;
+        pid_t pid = pd.kevs[i].ident;
         NAPI_ASYNC_CB_CALL(napi_create_int32(env, pd.kevs[i].data, &exit_code));
         NAPI_ASYNC_CB_CALL(napi_create_string_utf8(env, "exit", NAPI_AUTO_LENGTH, &exit_str));
         napi_value emit_args[] = { exit_str, exit_code };
-        JSCallback cb = pd.observers[pd.kevs[i].ident];
+        JSCallback cb = pd.observers[pid];
         napi_value this_arg;
         napi_value emit;
         NAPI_ASYNC_CB_CALL(napi_get_reference_value(env, cb.this_arg, &this_arg));
         NAPI_ASYNC_CB_CALL(napi_get_reference_value(env, cb.fn, &emit));
-        napi_delete_reference(env, cb.this_arg);
-        napi_delete_reference(env, cb.fn);
         NAPI_ASYNC_CB_CALL(napi_call_function(env, this_arg, emit, NAPI_ARRAY_LENGTH(emit_args), emit_args, NULL));
+        pd.observers.erase(pid);
+        NAPI_ASYNC_CB_CALL(napi_delete_reference(env, cb.this_arg));
+        NAPI_ASYNC_CB_CALL(napi_delete_reference(env, cb.fn));
       }
     }
 
   }
 
-  if (pd.running) {
+  if (pd.observers.empty()) {
+    napi_async_work work = pd.work;
+    pd.work = NULL;
+    pd.running = false;
+    NAPI_ASYNC_CB_CALL(napi_delete_async_work(env, work));
+  } else {
     NAPI_ASYNC_CB_CALL(napi_queue_async_work(env, pd.work));
   }
 
@@ -312,36 +319,17 @@ napi_status napi_inherits(napi_env env, napi_value base, napi_value super) {
 
   napi_status status;
   napi_value object;
-  // napi_value object_create;
   napi_value object_set_proto;
   napi_value super_proto;
   napi_value base_proto;
-  // napi_value props_obj;
-  // napi_value prop_obj;
-  // napi_value true_value;
-  // napi_value false_value;
-
-  // NAPI_PROC_CALL(napi_get_boolean(env, 0, &false_value));
-  // NAPI_PROC_CALL(napi_get_boolean(env, 1, &true_value));
-  //
-  // NAPI_PROC_CALL(napi_create_object(env, &prop_obj));
-  // NAPI_PROC_CALL(napi_set_named_property(env, prop_obj, "writable", true_value));
-  // NAPI_PROC_CALL(napi_set_named_property(env, prop_obj, "enumerable", false_value));
-  // NAPI_PROC_CALL(napi_set_named_property(env, prop_obj, "configurable", true_value));
-  // NAPI_PROC_CALL(napi_set_named_property(env, prop_obj, "value", base));
-  // NAPI_PROC_CALL(napi_create_object(env, &props_obj));
-  // NAPI_PROC_CALL(napi_set_named_property(env, props_obj, "constructor", prop_obj));
 
   NAPI_PROC_CALL(napi_get_named_property(env, super, "prototype", &super_proto));
   NAPI_PROC_CALL(napi_get_named_property(env, base, "prototype", &base_proto));
 
   NAPI_PROC_CALL(napi_get_global(env, &object));
   NAPI_PROC_CALL(napi_get_named_property(env, object, "Object", &object));
-  // NAPI_PROC_CALL(napi_get_named_property(env, object, "create", &object_create));
   NAPI_PROC_CALL(napi_get_named_property(env, object, "setPrototypeOf", &object_set_proto))
 
-  // napi_value create_args[] = { super_proto, props_obj };
-  // NAPI_PROC_CALL(napi_call_function(env, object, object_create, NAPI_ARRAY_LENGTH(create_args), create_args, &object));
   napi_value set_args[] = { base_proto, super_proto };
   NAPI_PROC_CALL(napi_call_function(env, object, object_set_proto, NAPI_ARRAY_LENGTH(set_args), set_args, NULL));
 
@@ -364,9 +352,6 @@ napi_value ProcessNew(napi_env env, napi_callback_info cb) {
   napi_value super_cons;
   struct kevent kev;
 
-  napi_ref emit_ref;
-  napi_ref this_arg_ref;
-
   // Initialize this_arg, argv, argc
   NAPI_EXTRACT_ARGS(1)
 
@@ -378,8 +363,6 @@ napi_value ProcessNew(napi_env env, napi_callback_info cb) {
   NAPI_CALL(napi_get_value_int64(env, argv[0], &pid));
   NAPI_CALL(napi_set_named_property(env, this_arg, "pid", argv[0]));
   NAPI_CALL(napi_get_named_property(env, this_arg, "emit", &emit));
-  NAPI_CALL(napi_create_reference(env, emit, 1, &emit_ref));
-  NAPI_CALL(napi_create_reference(env, this_arg, 1, &this_arg_ref));
 
   EV_SET(&kev, pid, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, NULL);
 
@@ -389,6 +372,12 @@ napi_value ProcessNew(napi_env env, napi_callback_info cb) {
 
   } else {
 
+    napi_ref emit_ref;
+    napi_ref this_arg_ref;
+
+    NAPI_CALL(napi_create_reference(env, emit, 1, &emit_ref));
+    NAPI_CALL(napi_create_reference(env, this_arg, 1, &this_arg_ref));
+
     pd.observers.emplace(pid, JSCallback(this_arg_ref, emit_ref));
 
     if (!pd.running) {
@@ -397,6 +386,7 @@ napi_value ProcessNew(napi_env env, napi_callback_info cb) {
         NAPI_CALL(napi_create_string_utf8(env, "PROCPOLL", NAPI_AUTO_LENGTH, &work_name));
         NAPI_CALL(napi_create_async_work(env, NULL, work_name, PollExecute, PollComplete, NULL, &pd.work));
       }
+      pd.running = true;
       NAPI_CALL(napi_queue_async_work(env, pd.work));
     }
 
@@ -450,6 +440,7 @@ napi_value ProcessGetRunning(napi_env env, napi_callback_info cb) {
   NAPI_CALL(napi_get_boolean(env, result.kp_proc.p_pid > 0 && result.kp_proc.p_stat != SZOMB, &out));
 
   return out;
+
 }
 
 napi_value Init(napi_env env, napi_callback_info cb) {
