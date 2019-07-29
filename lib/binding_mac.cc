@@ -1,16 +1,13 @@
 
 #include <string.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <sys/event.h>
 
-#include <unistd.h>
-
 #include <node_api.h>
-
-// TODO remove this import
-#include <CoreFoundation/CoreFoundation.h>
 
 #include <unordered_map>
 
@@ -129,12 +126,16 @@ const char* strerrid(int num) {
   }
 }
 
-#define NAPI_THROW_SYSCALL(errnum)                                   \
+#define NAPI_THROW(errcode, errmsg) \
   bool is_pending;                                                   \
   napi_is_exception_pending(env, &is_pending);                       \
   if (!is_pending) {                                                 \
-    napi_throw_error(env, strerrid(errnum), strerror(errnum));       \
+    napi_throw_error(env, errcode, errmsg);                          \
   }
+
+#define NAPI_THROW_SYSCALL(errnum) \
+  NAPI_THROW(strerrid(errnum), strerror(errnum))
+
 
 // Macro to be called in functions that return a promise
 //
@@ -201,7 +202,7 @@ const char* strerrid(int num) {
 #define NAPI_EXTRACT_ARGS(min_args)                                    \
   napi_value this_arg;                                                 \
   size_t argc;                                                         \
-  NAPI_CALL(napi_get_cb_info(env, cb, &argc, NULL, &this_arg, NULL));  \
+  NAPI_CALL(napi_get_cb_info(env, cb, &argc, NULL, NULL, NULL));  \
   if (argc < min_args) {                                               \
     napi_throw_error(env, NULL, "Not enough arguments.");              \
     return NULL;                                                       \
@@ -283,22 +284,37 @@ void PollComplete(napi_env env, napi_status status, void* data) {
   } else {
 
     for (int i = 0; i < pd.num_kevs; i++) {
-      if (pd.kevs[i].fflags & NOTE_EXIT) {
-        napi_value exit_str;
-        napi_value exit_code;
-        pid_t pid = pd.kevs[i].ident;
-        NAPI_ASYNC_CB_CALL(napi_create_int32(env, pd.kevs[i].data, &exit_code));
-        NAPI_ASYNC_CB_CALL(napi_create_string_utf8(env, "exit", NAPI_AUTO_LENGTH, &exit_str));
-        napi_value emit_args[] = { exit_str, exit_code };
-        JSCallback cb = pd.observers[pid];
-        napi_value this_arg;
-        napi_value emit;
-        NAPI_ASYNC_CB_CALL(napi_get_reference_value(env, cb.this_arg, &this_arg));
-        NAPI_ASYNC_CB_CALL(napi_get_reference_value(env, cb.fn, &emit));
-        NAPI_ASYNC_CB_CALL(napi_call_function(env, this_arg, emit, NAPI_ARRAY_LENGTH(emit_args), emit_args, NULL));
-        pd.observers.erase(pid);
-        NAPI_ASYNC_CB_CALL(napi_delete_reference(env, cb.this_arg));
-        NAPI_ASYNC_CB_CALL(napi_delete_reference(env, cb.fn));
+
+      switch (pd.kevs[i].filter) {
+
+        case EVFILT_USER:
+          if (pd.kevs[i].fflags & 0x1) {
+            pid_t pid = pd.kevs[i].ident;
+            pd.observers.erase(pid);
+          }
+          break;
+
+        case EVFILT_PROC:
+
+          if (pd.kevs[i].fflags & NOTE_EXIT) {
+            napi_value exit_str;
+            napi_value exit_code;
+            pid_t pid = pd.kevs[i].ident;
+            NAPI_ASYNC_CB_CALL(napi_create_int32(env, pd.kevs[i].data, &exit_code));
+            NAPI_ASYNC_CB_CALL(napi_create_string_utf8(env, "exit", NAPI_AUTO_LENGTH, &exit_str));
+            napi_value emit_args[] = { exit_str, exit_code };
+            JSCallback cb = pd.observers[pid];
+            napi_value this_arg;
+            napi_value emit;
+            NAPI_ASYNC_CB_CALL(napi_get_reference_value(env, cb.this_arg, &this_arg));
+            NAPI_ASYNC_CB_CALL(napi_get_reference_value(env, cb.fn, &emit));
+            NAPI_ASYNC_CB_CALL(napi_call_function(env, this_arg, emit, NAPI_ARRAY_LENGTH(emit_args), emit_args, NULL));
+            pd.observers.erase(pid);
+            NAPI_ASYNC_CB_CALL(napi_delete_reference(env, cb.this_arg));
+            NAPI_ASYNC_CB_CALL(napi_delete_reference(env, cb.fn));
+          }
+          break;
+
       }
     }
 
@@ -345,23 +361,74 @@ napi_status napi_inherits(napi_env env, napi_value base, napi_value super) {
       return NULL;                                         \
     } }
 
+int IsProcessRunning(pid_t pid, bool* out) {
+
+  // This MIB array will get passed to sysctl()
+  // See man 3 systcl for details
+  int name[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+
+  struct kinfo_proc result;
+  size_t oldp_len = sizeof(result);
+
+  // sysctl() refuses to fill the buffer if the PID does not exist,
+  // so the only way to detect failure is to set all fields to 0
+  memset(&result, 0, sizeof(struct kinfo_proc));
+
+  int status = sysctl(name, NAPI_ARRAY_LENGTH(name), &result, &oldp_len, NULL, 0);
+
+  if (status < 0) { 
+    return status;
+  }
+
+  // Possible values for kp_proc.p_stat are:
+  //
+  //   SIDL      Process being created by fork.
+  //   SRUN      Currently runnable.
+  //   SSLEEP    Sleeping on an address.
+  //   SSTOP     Process debugging or suspension.
+  //   SZOMB     Awaiting collection by parent.
+  //
+  // All values are accepted, except for zombie processes, which
+  // are effectively 'dead'.
+  //
+  *out = result.kp_proc.p_pid > 0 && result.kp_proc.p_stat != SZOMB;
+
+  return 0;
+
+}
+
 napi_value ProcessNew(napi_env env, napi_callback_info cb) {
 
-  int64_t pid;
+  pid_t pid;
   napi_value emit;
-  napi_value super_cons;
+  napi_value super;
   struct kevent kev;
+  bool is_running;
 
-  // Initialize this_arg, argv, argc
+  // Initialize this_arg, argv, argc, pid
   NAPI_EXTRACT_ARGS(1)
-
   NAPI_ASSERT_NUMBER(argv[0], "First argument must be a number.");
+  NAPI_CALL(napi_get_value_int32(env, argv[0], &pid));
 
-  NAPI_CALL(napi_get_named_property(env, (napi_value)data, "constructor", &super_cons));
-  NAPI_CALL(napi_call_function(env, this_arg, super_cons, 0, NULL, NULL));
+  // Check that the process we're trying to connect to actually exists
 
-  NAPI_CALL(napi_get_value_int64(env, argv[0], &pid));
+  if (IsProcessRunning(pid, &is_running) < 0) {
+    NAPI_THROW_SYSCALL(errno);
+    return NULL;
+  }
+
+  if (!is_running) {
+    NAPI_THROW(NULL, "Could not connect to process: process is not running");
+    return NULL;
+  }
+
+  NAPI_CALL(napi_get_reference_value(env, (napi_ref)data, &super));
+
+  // NAPI_CALL(napi_get_named_property(env, (napi_value)data, "constructor", &super_cons));
+  NAPI_CALL(napi_call_function(env, this_arg, super, 0, NULL, NULL));
+
   NAPI_CALL(napi_set_named_property(env, this_arg, "pid", argv[0]));
+
   NAPI_CALL(napi_get_named_property(env, this_arg, "emit", &emit));
 
   EV_SET(&kev, pid, EVFILT_PROC, EV_ADD | EV_ENABLE | EV_ONESHOT, NOTE_EXIT, 0, NULL);
@@ -395,49 +462,47 @@ napi_value ProcessNew(napi_env env, napi_callback_info cb) {
   return NULL;
 }
 
-napi_value ProcessGetRunning(napi_env env, napi_callback_info cb) {
+napi_value ProcessClose(napi_env env, napi_callback_info cb) {
 
-  int pid;
+  pid_t pid;
   napi_value pid_value;
 
+  // Initialize argv, argc, this_arg, pid
   NAPI_EXTRACT_ARGS(0);
-
   NAPI_CALL(napi_get_named_property(env, this_arg, "pid", &pid_value));
-
   NAPI_ASSERT_NUMBER(pid_value, "Process.pid is not a number.");
-
   NAPI_CALL(napi_get_value_int32(env, pid_value, &pid));
 
-  // This MIB array will get passed to sysctl()
-  // See man 3 systcl for details
-  int name[] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, pid };
+  struct kevent kev;
 
-  struct kinfo_proc result;
-  size_t oldp_len = sizeof(result);
+  EV_SET(&kev, pid, EVFILT_USER, EV_ADD | EV_ONESHOT, NOTE_TRIGGER | 0x1, 0, NULL);
 
-  // sysctl() refuses to fill the buffer if the PID does not exist,
-  // so the only way to detect failure is to set all fields to 0
-  memset(&result, 0, sizeof(struct kinfo_proc));
+  if (kevent(kq, &kev, 1, NULL, 0, NULL) < 0) {
+    NAPI_THROW_SYSCALL(errno);
+  }
 
-  if (sysctl(name, NAPI_ARRAY_LENGTH(name), &result, &oldp_len, NULL, 0) != 0) { 
+  return NULL;
+}
+
+napi_value ProcessGetRunning(napi_env env, napi_callback_info cb) {
+
+  pid_t pid;
+  napi_value pid_value;
+  bool is_running;
+  napi_value out;
+
+  // Initialize argv, argc, this_arg, pid
+  NAPI_EXTRACT_ARGS(0);
+  NAPI_CALL(napi_get_named_property(env, this_arg, "pid", &pid_value));
+  NAPI_ASSERT_NUMBER(pid_value, "Process.pid is not a number.");
+  NAPI_CALL(napi_get_value_int32(env, pid_value, &pid));
+
+  if (IsProcessRunning(pid, &is_running) < 0) {
     NAPI_THROW_SYSCALL(errno);
     return NULL;
   }
 
-  napi_value out;
-
-  // Possible values for kp_proc.p_stat are:
-  //
-  //   SIDL      Process being created by fork.
-  //   SRUN      Currently runnable.
-  //   SSLEEP    Sleeping on an address.
-  //   SSTOP     Process debugging or suspension.
-  //   SZOMB     Awaiting collection by parent.
-  //
-  // All values are accepted, except for zombie processes, which
-  // are effectively 'dead'.
-  //
-  NAPI_CALL(napi_get_boolean(env, result.kp_proc.p_pid > 0 && result.kp_proc.p_stat != SZOMB, &out));
+  NAPI_CALL(napi_get_boolean(env, is_running, &out));
 
   return out;
 
@@ -447,16 +512,19 @@ napi_value Init(napi_env env, napi_callback_info cb) {
 
   napi_value exports;
   napi_value process_cons;
+  napi_ref super_ref;
 
   NAPI_EXTRACT_ARGS(1);
 
   NAPI_CALL(napi_create_object(env, &exports));
 
   napi_property_descriptor process_props[] = {
-    { "running", NULL, NULL, ProcessGetRunning, NULL, NULL, napi_default, NULL }
+    { "running", NULL, NULL, ProcessGetRunning, NULL, NULL, napi_default, NULL },
+    { "close", NULL, ProcessClose, NULL, NULL, NULL, napi_default, NULL }
   };
 
-  NAPI_CALL(napi_define_class(env, "Process", NAPI_AUTO_LENGTH, ProcessNew, argv[0], NAPI_ARRAY_LENGTH(process_props), process_props, &process_cons));
+  NAPI_CALL(napi_create_reference(env, argv[0], 1, &super_ref));
+  NAPI_CALL(napi_define_class(env, "Process", NAPI_AUTO_LENGTH, ProcessNew, super_ref, NAPI_ARRAY_LENGTH(process_props), process_props, &process_cons));
   NAPI_CALL(napi_inherits(env, process_cons, argv[0]));
 
   napi_property_descriptor props[] = {
