@@ -1,9 +1,18 @@
-
-:warning: Windows is not (yet) supported.
+Process Management for NodeJS
+=============================
 
 This module provives advanced facilities for querying and manipulating running
 processes on macOS and Linux. It does so by integrating with the
 underlying facilities provided by the OS.
+
+:warning: Windows is not (yet) supported.
+
+### Features
+
+ - Query whether any process is running, even daemons and non-GUI applications on macOS.
+ - Connect to a process and be notified when it is done.
+
+Pull requests are welcome!
 
 ## Example
 
