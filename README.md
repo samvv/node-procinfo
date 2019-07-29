@@ -1,7 +1,7 @@
 Process Management for NodeJS
 =============================
 
-This module provives advanced facilities for querying and manipulating running
+This module provides advanced facilities for querying and manipulating running
 processes on macOS and Linux. It does so by integrating with the
 underlying facilities provided by the OS.
 
@@ -22,7 +22,7 @@ Pull requests are welcome!
 ```js
 #!/usr/bin/env node
 
-import { Process } from "processes"
+import { Process } from "process-info"
 
 const pid = Number(processes.argv[2])
 
