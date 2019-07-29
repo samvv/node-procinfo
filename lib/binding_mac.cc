@@ -2,7 +2,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
-
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <sys/event.h>
@@ -508,6 +508,31 @@ napi_value ProcessGetRunning(napi_env env, napi_callback_info cb) {
 
 }
 
+napi_value ProcessKill(napi_env env, napi_callback_info cb) {
+
+  pid_t pid;
+  napi_value pid_value;
+
+  // Initialize argv, argc, this_arg, pid
+  NAPI_EXTRACT_ARGS(0);
+  NAPI_CALL(napi_get_named_property(env, this_arg, "pid", &pid_value));
+  NAPI_ASSERT_NUMBER(pid_value, "Process.pid is not a number.");
+  NAPI_CALL(napi_get_value_int32(env, pid_value, &pid));
+
+  int signal = SIGTERM;
+
+  if (argc > 0) {
+    NAPI_ASSERT_NUMBER(argv[0], "First argument must be a number." );
+    NAPI_CALL(napi_get_value_int32(env, argv[0], &signal))
+  }
+
+  if (kill(pid, signal)) {
+    NAPI_THROW_SYSCALL(errno);
+  }
+
+  return NULL;
+}
+
 napi_value Init(napi_env env, napi_callback_info cb) {
 
   napi_value exports;
@@ -520,7 +545,8 @@ napi_value Init(napi_env env, napi_callback_info cb) {
 
   napi_property_descriptor process_props[] = {
     { "running", NULL, NULL, ProcessGetRunning, NULL, NULL, napi_default, NULL },
-    { "close", NULL, ProcessClose, NULL, NULL, NULL, napi_default, NULL }
+    { "close", NULL, ProcessClose, NULL, NULL, NULL, napi_default, NULL },
+    { "kill", NULL, ProcessKill, NULL, NULL, NULL, napi_default, NULL }
   };
 
   NAPI_CALL(napi_create_reference(env, argv[0], 1, &super_ref));
@@ -529,8 +555,6 @@ napi_value Init(napi_env env, napi_callback_info cb) {
 
   napi_property_descriptor props[] = {
     { "Process", NULL, NULL, NULL, NULL, process_cons, napi_default, NULL },
-    // { "processIsRunning", NULL, process_is_running, NULL, NULL, NULL, napi_default, NULL },
-    // { "waitProcessComplete", NULL, processes_wait_complete, NULL, NULL, NULL, napi_default, NULL }
   };
   NAPI_CALL(napi_define_properties(env, exports, NAPI_ARRAY_LENGTH(props), props));
 

@@ -37,6 +37,13 @@ describe('a process monitor', () => {
     assert.throws(() => new Process(0), Error);
   })
 
+  it('can kill a process', () => {
+    // Make sure to sleep longer than the test timeout
+    const spawned = spawnSibling('sleep 10')
+    const proc = new Process(spawned.pid)
+    proc.kill()
+  })
+
   it('can detach from a connected process', () => {
     // Make sure to sleep longer than the test timeout
     const spawned = spawnSibling('sleep 10')

@@ -11,6 +11,8 @@ underlying facilities provided by the OS.
 
  - Query whether any process is running, even daemons and non-GUI applications on macOS.
  - Connect to a process and be notified when it is done.
+ - Send a custom signal to a process
+ - Kill a process
 
 Pull requests are welcome!
 
@@ -56,6 +58,12 @@ Registers a callback to be executed when the process exits.
 ### Process.close()
 
 Stops monitoring the process and allows NodeJS to exit.
+
+### Process.kill(signal?)
+
+Send the given signal to the process.
+
+If no signal is provided, will default to `SIGTERM`.
 
 ## License
 
