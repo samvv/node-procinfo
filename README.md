@@ -2,8 +2,8 @@ Process Management for NodeJS
 =============================
 
 This module provides advanced facilities for querying and manipulating running
-processes on macOS and Linux. It does so by integrating with the
-underlying facilities provided by the OS.
+processes on macOS and Linux. It does so by integrating with the relevant
+routines provided by the OS.
 
 :warning: Windows is not (yet) supported.
 
@@ -22,7 +22,7 @@ Pull requests are welcome!
 ```js
 #!/usr/bin/env node
 
-import { Process } from "process-info"
+import { Process } from "procman"
 
 const pid = Number(processes.argv[2])
 
