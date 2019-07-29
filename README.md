@@ -1,6 +1,8 @@
 
+:warning: Windows is not (yet) supported.
+
 This module provives advanced facilities for querying and manipulating running
-processes on Windows, macOS and Linux. It does so by integrating with the
+processes on macOS and Linux. It does so by integrating with the
 underlying facilities provided by the OS.
 
 ## Example
