@@ -1,6 +1,6 @@
 {
   "name": "procman",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A native node addon to query and manipulate running processes",
   "main": "lib/index.js",
   "scripts": {
